@@ -10,16 +10,21 @@ import (
 )
 
 const (
-	DataVersion  = 3955 // Minecraft Java 1.21.1; confirmed against the server version.json.
-	MaxLines     = 2000
-	MaxPathCells = 100000
-	MaxVolume    = 2000000
-	LaneSpacing  = 4
+	DataVersion     = 3955 // Minecraft Java 1.21.1; confirmed against the server version.json.
+	MaxLines        = 2000
+	MaxProjectLines = 10000
+	MaxPathCells    = 100000
+	MaxVolume       = 2000000
+	DefaultLaneGap  = 3
 )
 
 type Line struct {
-	Text       string `json:"text"`
-	SourceLine int    `json:"source_line"`
+	Text        string `json:"text"`
+	SourceLine  int    `json:"source_line"`
+	SourceFile  string `json:"source_file,omitempty"`
+	SourceGroup int    `json:"source_group,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+	BreakBefore bool   `json:"break_before,omitempty"`
 	// DelayTenths is the interval AFTER this line. The final line has no successor.
 	DelayTenths int `json:"delay_tenths"`
 }
@@ -29,6 +34,41 @@ type Request struct {
 	MaxWidth int    `json:"max_width"`
 	Target   string `json:"target"`
 	Name     string `json:"name"`
+	// A pointer distinguishes an omitted legacy setting from the invalid value 0.
+	LaneGap *int `json:"lane_gap,omitempty"`
+}
+
+func (r Request) Gap() int {
+	if r.LaneGap == nil {
+		return DefaultLaneGap
+	}
+	return *r.LaneGap
+}
+
+func (l Line) Type() string {
+	if l.Kind != "" {
+		return l.Kind
+	}
+	if strings.HasPrefix(l.Text, "/") {
+		return "command"
+	}
+	return "dialogue"
+}
+
+func (l Line) Command(target string) (string, error) {
+	switch l.Type() {
+	case "command":
+		command := strings.TrimSpace(strings.TrimPrefix(l.Text, "/"))
+		if command == "" {
+			return "", fmt.Errorf("指令不能为空，请补全 / 后的内容")
+		}
+		return command, nil
+	case "dialogue":
+		payload, _ := json.Marshal(map[string]string{"text": l.Text})
+		return "tellraw " + target + " " + string(payload), nil
+	default:
+		return "", fmt.Errorf("类型应为 dialogue 或 command")
+	}
 }
 
 type Pos struct {
@@ -52,6 +92,8 @@ type Event struct {
 	AtTenths       int    `json:"at_tenths"`
 	RepeatersAfter int    `json:"repeaters_after"`
 	Command        string `json:"command"`
+	Kind           string `json:"kind"`
+	SourceFile     string `json:"source_file,omitempty"`
 }
 type Layout struct {
 	Width          int     `json:"width"`
@@ -63,6 +105,7 @@ type Layout struct {
 	Cells          []Cell  `json:"cells"`
 	Events         []Event `json:"events"`
 	Name           string  `json:"name"`
+	LaneGap        int     `json:"lane_gap"`
 }
 
 func SecondsToTenths(s float64) (int, error) {
@@ -81,10 +124,13 @@ func (r Request) Validate() error {
 		return fmt.Errorf("请先导入至少一行文本")
 	}
 	if len(r.Lines) > MaxLines {
-		return fmt.Errorf("最多支持 %d 行文本", MaxLines)
+		return fmt.Errorf("每个结构最多 %d 条，请使用分块导出", MaxLines)
 	}
 	if r.MaxWidth < 8 || r.MaxWidth > 256 {
 		return fmt.Errorf("最大宽度应为 8～256 格（包含按钮及转弯）")
+	}
+	if r.Gap() < 1 || r.Gap() > 32758 {
+		return fmt.Errorf("两条主线之间的空格数应为 1～32758，不能为 0；最终结构仍受体积限制")
 	}
 	if r.Target == "" || len(r.Target) > 1024 || strings.ContainsAny(r.Target, "\r\n\x00") {
 		return fmt.Errorf("播报对象无效")
@@ -103,6 +149,13 @@ func (r Request) Validate() error {
 		if len(l.Text) > 16000 {
 			return fmt.Errorf("第 %d 条文本过长，请拆分成多行", i+1)
 		}
+		command, err := l.Command(r.Target)
+		if err != nil {
+			return fmt.Errorf("第 %d 条：%w", i+1, err)
+		}
+		if len(command) > 30000 {
+			return fmt.Errorf("第 %d 条转换后的指令过长，请拆分", i+1)
+		}
 		if i < len(r.Lines)-1 {
 			if l.DelayTenths < 1 || l.DelayTenths > 6000 {
 				return fmt.Errorf("第 %d 条的间隔应为 0.1～600 秒", i+1)
@@ -117,17 +170,17 @@ func (r Request) Validate() error {
 }
 
 // cursor produces a non-self-touching serpentine path. Both corner cells are
-// always dust, so a bend NEVER adds hidden repeater delay. Four-block lane
-// spacing also keeps wire and repeater side inputs away from the next lane.
-type cursor struct{ x, z, row, phase, width int }
+// always dust, so a bend NEVER adds hidden repeater delay. A gap of at least
+// one block keeps neighboring lanes from connecting or locking repeaters.
+type cursor struct{ x, z, row, phase, width, spacing int }
 
-func newCursor(w int) *cursor { return &cursor{x: 1, width: w} }
-func (c *cursor) pos() Pos    { return Pos{c.x, 1, c.z} }
+func newCursor(w, spacing int) *cursor { return &cursor{x: 1, width: w, spacing: spacing} }
+func (c *cursor) pos() Pos             { return Pos{c.x, 1, c.z} }
 func (c *cursor) next() Pos {
 	if c.phase > 0 {
 		c.z++
 		c.phase++
-		if c.phase == LaneSpacing+1 {
+		if c.phase == c.spacing+1 {
 			c.phase = 0
 			c.row++
 		}
@@ -179,11 +232,11 @@ func Build(r Request) (*Layout, error) {
 	if err := r.Validate(); err != nil {
 		return nil, err
 	}
-	l := &Layout{Height: 3, Name: r.Name, Cells: []Cell{{Pos: Pos{0, 1, 0}, Kind: "button", State: "minecraft:stone_button[face=floor,facing=east,powered=false]"}}}
+	l := &Layout{Height: 3, Name: r.Name, LaneGap: r.Gap(), Cells: []Cell{{Pos: Pos{0, 1, 0}, Kind: "button", State: "minecraft:stone_button[face=floor,facing=east,powered=false]"}}}
 	if l.Name == "" {
 		l.Name = "dialogue"
 	}
-	c := newCursor(r.MaxWidth)
+	c := newCursor(r.MaxWidth, r.Gap()+1)
 	prev := Pos{0, 1, 0}
 	current := c.pos()
 	next := c.next()
@@ -193,17 +246,13 @@ func Build(r Request) (*Layout, error) {
 		cell := Cell{Pos: current}
 		if pendingDelay == 0 {
 			line := r.Lines[lineIndex]
-			payload, _ := json.Marshal(map[string]string{"text": line.Text})
-			command := "tellraw " + r.Target + " " + string(payload)
-			if len(command) > 30000 {
-				return nil, fmt.Errorf("第 %d 条转换后的指令过长，请拆分", lineIndex+1)
-			}
+			command, _ := line.Command(r.Target) // Already validated above.
 			count := 0
 			if lineIndex < len(r.Lines)-1 {
 				count = (line.DelayTenths + 3) / 4
 			}
-			l.Events = append(l.Events, Event{Pos: Pos{current.X, 0, current.Z}, Line: lineIndex + 1, SourceLine: line.SourceLine, Text: line.Text, AtTenths: elapsed, RepeatersAfter: count, Command: command})
-			cell.Kind = "dialogue"
+			l.Events = append(l.Events, Event{Pos: Pos{current.X, 0, current.Z}, Line: lineIndex + 1, SourceLine: line.SourceLine, SourceFile: line.SourceFile, Kind: line.Type(), Text: line.Text, AtTenths: elapsed, RepeatersAfter: count, Command: command})
+			cell.Kind = line.Type()
 			cell.Line = lineIndex + 1
 			cell.State = wireState(in, out)
 			lineIndex++
@@ -248,7 +297,7 @@ func Build(r Request) (*Layout, error) {
 	l.Width = maxX + 2
 	l.Length = maxZ + 2
 	l.DurationTenths = elapsed
-	l.Rows = maxZ/LaneSpacing + 1
+	l.Rows = maxZ/(r.Gap()+1) + 1
 	if l.Width*l.Height*l.Length > MaxVolume {
 		return nil, fmt.Errorf("结构体积超过 %d 格，请减少文本或间隔", MaxVolume)
 	}

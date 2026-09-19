@@ -1,0 +1,75 @@
+{
+  "lines": [
+    {
+      "text": "A：别出声，前面有人。",
+      "source_line": 2,
+      "source_file": "混合剧情.txt",
+      "source_group": 1,
+      "kind": "dialogue",
+      "delay_tenths": 20
+    },
+    {
+      "text": "B：你确定是这条路吗？",
+      "source_line": 3,
+      "source_file": "混合剧情.txt",
+      "source_group": 1,
+      "kind": "dialogue",
+      "delay_tenths": 20
+    },
+    {
+      "text": "/title @a title {\"text\":\"遗迹入口\",\"color\":\"gold\"}",
+      "source_line": 4,
+      "source_file": "混合剧情.txt",
+      "source_group": 1,
+      "kind": "command",
+      "delay_tenths": 20
+    },
+    {
+      "text": "A：拿好这颗钻石，跟我来。",
+      "source_line": 5,
+      "source_file": "混合剧情.txt",
+      "source_group": 1,
+      "kind": "dialogue",
+      "delay_tenths": 20
+    },
+    {
+      "text": "/give @a minecraft:diamond 1",
+      "source_line": 6,
+      "source_file": "混合剧情.txt",
+      "source_group": 1,
+      "kind": "command",
+      "delay_tenths": 20
+    },
+    {
+      "text": "A：看见那扇门了吗？",
+      "source_line": 8,
+      "source_file": "混合剧情.txt",
+      "source_group": 1,
+      "kind": "dialogue",
+      "delay_tenths": 20
+    },
+    {
+      "text": "A：等我发出信号，我们一起进去。",
+      "source_line": 9,
+      "source_file": "混合剧情.txt",
+      "source_group": 1,
+      "kind": "dialogue",
+      "delay_tenths": 20
+    },
+    {
+      "text": "B：明白！",
+      "source_line": 10,
+      "source_file": "混合剧情.txt",
+      "source_group": 1,
+      "kind": "dialogue",
+      "delay_tenths": 20
+    }
+  ],
+  "max_width": 8,
+  "target": "@a",
+  "name": "混合剧情",
+  "lane_gap": 1,
+  "schema_version": 2,
+  "split_mode": "count",
+  "split_every": 4
+}

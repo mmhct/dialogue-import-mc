@@ -11,9 +11,10 @@ import (
 )
 
 type Parsed struct {
-	Lines      []circuit.Line `json:"lines"`
-	BlankLines int            `json:"blank_lines"`
-	Encoding   string         `json:"encoding"`
+	Lines        []circuit.Line `json:"lines"`
+	BlankLines   int            `json:"blank_lines"`
+	CommentLines int            `json:"comment_lines"`
+	Encoding     string         `json:"encoding"`
 }
 
 // Decode supports UTF-8 and BOM-marked UTF-16. The browser additionally supports
@@ -55,6 +56,12 @@ func Parse(s string, skipBlank bool, delay int) (Parsed, error) {
 		return p, fmt.Errorf("TXT 文件没有文本")
 	}
 	for i, t := range strings.Split(s, "\n") {
+		// Only a # in the first column marks a comment. Preserve source line
+		// numbers after dropping comments so the editor can locate the original.
+		if strings.HasPrefix(t, "#") {
+			p.CommentLines++
+			continue
+		}
 		if strings.ContainsRune(t, 0) {
 			return p, fmt.Errorf("第 %d 行含有 NUL 字符，请检查文件编码", i+1)
 		}
@@ -64,13 +71,17 @@ func Parse(s string, skipBlank bool, delay int) (Parsed, error) {
 				continue
 			}
 		}
-		p.Lines = append(p.Lines, circuit.Line{Text: t, SourceLine: i + 1, DelayTenths: delay})
+		line := circuit.Line{Text: t, SourceLine: i + 1, DelayTenths: delay}
+		line.Kind = line.Type()
+		p.Lines = append(p.Lines, line)
 	}
 	if len(p.Lines) == 0 {
-		return p, fmt.Errorf("TXT 文件只有空行")
+		// A comments-only file can be part of a batch. The project builder
+		// rejects a batch that contains no playable entries at all.
+		return p, nil
 	}
-	if len(p.Lines) > circuit.MaxLines {
-		return p, fmt.Errorf("最多支持 %d 行文本", circuit.MaxLines)
+	if len(p.Lines) > circuit.MaxProjectLines {
+		return p, fmt.Errorf("一个项目最多支持 %d 条（不含已忽略的行）", circuit.MaxProjectLines)
 	}
 	return p, nil
 }

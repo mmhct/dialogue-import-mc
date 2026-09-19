@@ -9,7 +9,7 @@ try {
     $env:GOOS = 'windows'
     $env:GOARCH = 'amd64'
     $env:CGO_ENABLED = '0'
-    go build -trimpath -ldflags '-s -w -H=windowsgui' -o dist/DialogueForge.exe ./cmd/dialogueforge
+    go build -buildvcs=false -trimpath -ldflags '-s -w -H=windowsgui' -o dist/DialogueForge.exe ./cmd/dialogueforge
     if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
     Write-Output 'Built dist/DialogueForge.exe'
 } finally {

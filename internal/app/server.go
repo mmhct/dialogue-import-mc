@@ -1,11 +1,9 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
-	"dialogueforge/internal/circuit"
-	"dialogueforge/internal/schematic"
+	"dialogueforge/internal/project"
 	"dialogueforge/internal/textfile"
 	"dialogueforge/web"
 	"encoding/hex"
@@ -13,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"os/exec"
@@ -21,7 +20,7 @@ import (
 	"time"
 )
 
-const Version = "1.0.0"
+const Version = "1.1.0"
 
 func sendJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -82,29 +81,44 @@ func Handler(prefix string, shutdown func()) http.Handler {
 					return
 				}
 				sendJSON(w, p)
-			case "api/preview", "api/export":
-				var in circuit.Request
+			case "api/preview", "api/export", "api/export-part":
+				var in struct {
+					project.Project
+					PartIndex int `json:"part_index"`
+				}
 				if err := decode(w, r, &in); err != nil {
 					fail(w, err)
 					return
 				}
-				layout, err := circuit.Build(in)
+				bundle, err := project.Build(in.Project)
 				if err != nil {
 					fail(w, err)
 					return
 				}
 				if path == "api/preview" {
-					sendJSON(w, layout)
+					preview, err := bundle.Preview(in.PartIndex)
+					if err != nil {
+						fail(w, err)
+						return
+					}
+					sendJSON(w, preview)
 					return
 				}
-				var b bytes.Buffer
-				if err = schematic.Write(&b, layout); err != nil {
+				var onlyPart *int
+				if path == "api/export-part" {
+					onlyPart = &in.PartIndex
+				}
+				data, name, err := bundle.Export(in.Project, onlyPart)
+				if err != nil {
 					fail(w, err)
 					return
 				}
 				w.Header().Set("Content-Type", "application/octet-stream")
-				w.Header().Set("Content-Disposition", `attachment; filename="dialogue.schem"`)
-				w.Write(b.Bytes())
+				if strings.HasSuffix(name, ".zip") {
+					w.Header().Set("Content-Type", "application/zip")
+				}
+				w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
+				w.Write(data)
 			case "api/shutdown":
 				sendJSON(w, map[string]bool{"ok": true})
 				if shutdown != nil {

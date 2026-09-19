@@ -23,85 +23,124 @@ func abs(x int) int {
 }
 
 func TestPhysicalPathAndTiming(t *testing.T) {
-	for _, width := range []int{8, 9, 16, 31, 64, 256} {
-		for _, delay := range []int{1, 2, 3, 4, 5, 7, 10, 20, 55, 80} {
-			t.Run(fmt.Sprintf("width%d_delay%d", width, delay), func(t *testing.T) {
-				r := requestFor(37, width, delay)
-				l, err := Build(r)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if l.Width > width {
-					t.Fatalf("width %d > %d", l.Width, width)
-				}
-				if len(l.Events) != 37 || l.Repeaters != 36*((delay+3)/4) || l.DurationTenths != 36*delay {
-					t.Fatal("event/delay count mismatch")
-				}
-				visited := map[Pos]int{}
-				ticks := 0
-				event := 0
-				wireRun := 0
-				for i, c := range l.Cells {
-					if _, ok := visited[c.Pos]; ok {
-						t.Fatalf("overlap at %+v", c.Pos)
+	for _, gap := range []int{1, 2, 3, 5, 16} {
+		for _, width := range []int{8, 9, 16, 31, 64, 256} {
+			for _, delay := range []int{1, 2, 3, 4, 5, 7, 10, 20, 55, 80} {
+				t.Run(fmt.Sprintf("gap%d_width%d_delay%d", gap, width, delay), func(t *testing.T) {
+					r := requestFor(37, width, delay)
+					r.LaneGap = &gap
+					l, err := Build(r)
+					if err != nil {
+						t.Fatal(err)
 					}
-					visited[c.Pos] = i
-					if c.X < 0 || c.X >= l.Width || c.Z < 0 || c.Z >= l.Length {
-						t.Fatalf("out of bounds %+v", c)
+					if l.Width > width {
+						t.Fatalf("width %d > %d", l.Width, width)
 					}
-					if i > 0 {
-						p := l.Cells[i-1].Pos
-						if abs(p.X-c.X)+abs(p.Z-c.Z) != 1 {
-							t.Fatal("disconnected path")
+					if len(l.Events) != 37 || l.Repeaters != 36*((delay+3)/4) || l.DurationTenths != 36*delay {
+						t.Fatal("event/delay count mismatch")
+					}
+					visited := map[Pos]int{}
+					ticks := 0
+					event := 0
+					wireRun := 0
+					for i, c := range l.Cells {
+						if _, ok := visited[c.Pos]; ok {
+							t.Fatalf("overlap at %+v", c.Pos)
+						}
+						visited[c.Pos] = i
+						if c.X < 0 || c.X >= l.Width || c.Z < 0 || c.Z >= l.Length {
+							t.Fatalf("out of bounds %+v", c)
+						}
+						if i > 0 {
+							p := l.Cells[i-1].Pos
+							if abs(p.X-c.X)+abs(p.Z-c.Z) != 1 {
+								t.Fatal("disconnected path")
+							}
+						}
+						if c.Kind == "repeater" {
+							if c.Delay < 1 || c.Delay > 4 {
+								t.Fatal("invalid delay")
+							}
+							ticks += c.Delay
+							wireRun = 0
+							if i == 0 || i == len(l.Cells)-1 {
+								t.Fatal("repeater at endpoint")
+							}
+							if direction(l.Cells[i-1].Pos, c.Pos) != c.Facing || direction(c.Pos, l.Cells[i+1].Pos) != c.Facing {
+								t.Fatalf("repeater at corner: %+v", c)
+							}
+						} else {
+							wireRun++
+							if wireRun > 14 {
+								t.Fatal("wire loses signal strength")
+							}
+						}
+						if c.Kind == "dialogue" {
+							if ticks != event*delay || l.Events[event].AtTenths != ticks {
+								t.Fatalf("wrong physical delay at %d: %d", event, ticks)
+							}
+							event++
 						}
 					}
-					if c.Kind == "repeater" {
-						if c.Delay < 1 || c.Delay > 4 {
-							t.Fatal("invalid delay")
-						}
-						ticks += c.Delay
-						wireRun = 0
-						if i == 0 || i == len(l.Cells)-1 {
-							t.Fatal("repeater at endpoint")
-						}
-						if direction(l.Cells[i-1].Pos, c.Pos) != c.Facing || direction(c.Pos, l.Cells[i+1].Pos) != c.Facing {
-							t.Fatalf("repeater at corner: %+v", c)
-						}
-					} else {
-						wireRun++
-						if wireRun > 14 {
-							t.Fatal("wire loses signal strength")
+					// Any side contact with a non-neighbor in the path is an electrical shortcut.
+					for p, i := range visited {
+						for _, d := range []Pos{{X: 1}, {X: -1}, {Z: 1}, {Z: -1}} {
+							if j, ok := visited[Pos{p.X + d.X, p.Y, p.Z + d.Z}]; ok && abs(i-j) > 1 {
+								t.Fatalf("short circuit at %v and step %d", p, j)
+							}
 						}
 					}
-					if c.Kind == "dialogue" {
-						if ticks != event*delay || l.Events[event].AtTenths != ticks {
-							t.Fatalf("wrong physical delay at %d: %d", event, ticks)
+					b := l.Blocks()
+					if len(b) != l.Width*l.Height*l.Length {
+						t.Fatal("volume")
+					}
+					for _, e := range l.Events {
+						idx := e.X + e.Z*l.Width
+						if !strings.HasPrefix(b[idx], "minecraft:command_block") {
+							t.Fatal("missing command")
 						}
-						event++
-					}
-				}
-				// Any side contact with a non-neighbor in the path is an electrical shortcut.
-				for p, i := range visited {
-					for _, d := range []Pos{{X: 1}, {X: -1}, {Z: 1}, {Z: -1}} {
-						if j, ok := visited[Pos{p.X + d.X, p.Y, p.Z + d.Z}]; ok && abs(i-j) > 1 {
-							t.Fatalf("short circuit at %v and step %d", p, j)
+						if !strings.HasPrefix(b[idx+l.Width*l.Length], "minecraft:redstone_wire") {
+							t.Fatal("missing tap")
 						}
 					}
-				}
-				b := l.Blocks()
-				if len(b) != l.Width*l.Height*l.Length {
-					t.Fatal("volume")
-				}
-				for _, e := range l.Events {
-					idx := e.X + e.Z*l.Width
-					if !strings.HasPrefix(b[idx], "minecraft:command_block") {
-						t.Fatal("missing command")
-					}
-					if !strings.HasPrefix(b[idx+l.Width*l.Length], "minecraft:redstone_wire") {
-						t.Fatal("missing tap")
-					}
-				}
-			})
+				})
+			}
+		}
+	}
+}
+
+func TestRawCommandsAndGap(t *testing.T) {
+	r := requestFor(4, 8, 7)
+	r.Lines[0].Text = `/tp @a 100 64 200`
+	r.Lines[1].Text = `/title @a title {"text":"章节 😀"}`
+	r.Lines[2].Text, r.Lines[2].Kind = `give @a minecraft:diamond 1`, "command"
+	r.Lines[3].Text, r.Lines[3].Kind = `/这是一句对白`, "dialogue"
+	l, err := Build(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if l.Events[i].Kind != "command" || l.Events[i].Command != strings.TrimPrefix(r.Lines[i].Text, "/") || l.Events[i].AtTenths != i*7 {
+			t.Fatal(l.Events[i])
+		}
+	}
+	if !strings.HasPrefix(l.Events[3].Command, "tellraw @a ") {
+		t.Fatal("explicit dialogue was not honored")
+	}
+	if l.LaneGap != 3 {
+		t.Fatal("legacy default changed")
+	}
+	for _, gap := range []int{0, -1, 32759} {
+		r.LaneGap = &gap
+		if _, err := Build(r); err == nil {
+			t.Fatal("invalid gap accepted", gap)
+		}
+	}
+	r.LaneGap = nil
+	for _, text := range []string{"/", "/  ", "/say bad\ncommand"} {
+		r.Lines[0].Text = text
+		if _, err := Build(r); err == nil {
+			t.Fatal("invalid command accepted", text)
 		}
 	}
 }

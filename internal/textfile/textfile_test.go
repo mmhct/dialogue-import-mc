@@ -20,8 +20,32 @@ func TestLineBoundaries(t *testing.T) {
 	if len(p.Lines) != 3 || p.Lines[0].Text != "  A： 保留空格  " || p.Lines[1].Text != "" {
 		t.Fatal(p)
 	}
-	if _, e = Parse("\n\n", true, 20); e == nil {
-		t.Fatal("empty")
+	if p, e = Parse("\n\n", true, 20); e != nil || len(p.Lines) != 0 {
+		t.Fatal("ignored blank file should contribute no entries", p, e)
+	}
+}
+
+func TestCommentsAndCommands(t *testing.T) {
+	for _, skip := range []bool{true, false} {
+		p, err := Parse("\ufeff# 第一幕\r\nA：开始\r\n/tp @a 1 2 3\r\n# /give @a minecraft:diamond\r\n #这是对白\r\n /这也是对白\r\nB：结束\r\n", skip, 20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.CommentLines != 2 || len(p.Lines) != 5 {
+			t.Fatal(p)
+		}
+		for i, n := range []int{2, 3, 5, 6, 7} {
+			if p.Lines[i].SourceLine != n {
+				t.Fatal(p)
+			}
+		}
+		if p.Lines[1].Kind != "command" || p.Lines[2].Kind != "dialogue" || p.Lines[3].Kind != "dialogue" {
+			t.Fatal(p)
+		}
+	}
+	p, err := Parse("#一\n#二\n", false, 20)
+	if err != nil || len(p.Lines) != 0 || p.CommentLines != 2 {
+		t.Fatal(p, err)
 	}
 }
 
