@@ -1,0 +1,37 @@
+{
+  "name": "example",
+  "max_width": 8,
+  "target": "@a",
+  "lines": [
+    {
+      "text": "A：别出声，前面有人。",
+      "source_line": 1,
+      "delay_tenths": 20
+    },
+    {
+      "text": "B：你确定是这条路吗？",
+      "source_line": 2,
+      "delay_tenths": 20
+    },
+    {
+      "text": "A：看见那扇门了吗？",
+      "source_line": 3,
+      "delay_tenths": 20
+    },
+    {
+      "text": "A：等我发出信号，我们一起进去。",
+      "source_line": 4,
+      "delay_tenths": 20
+    },
+    {
+      "text": "B：明白。我数到三。",
+      "source_line": 5,
+      "delay_tenths": 20
+    },
+    {
+      "text": "B：一、二、三！",
+      "source_line": 6,
+      "delay_tenths": 20
+    }
+  ]
+}

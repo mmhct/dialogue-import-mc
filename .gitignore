@@ -1,0 +1,5 @@
+.tools/
+.validation/
+dist/
+*.log
+.DS_Store
